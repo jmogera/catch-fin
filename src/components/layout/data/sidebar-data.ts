@@ -1,10 +1,4 @@
-import {
-  LayoutDashboard,
-  Wallet,
-  Receipt,
-  Settings,
-  Command,
-} from 'lucide-react'
+import { LayoutDashboard, Wallet, Receipt, Settings, Command, PiggyBank } from 'lucide-react'
 import { type SidebarData } from '../types'
 
 export const sidebarData: SidebarData = {
@@ -28,6 +22,11 @@ export const sidebarData: SidebarData = {
           title: 'Dashboard',
           url: '/',
           icon: LayoutDashboard,
+        },
+        {
+          title: 'Budget',
+          url: '/budget',
+          icon: PiggyBank,
         },
         {
           title: 'Transactions',

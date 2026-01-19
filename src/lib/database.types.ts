@@ -9,6 +9,35 @@ export type Json =
 export interface Database {
   public: {
     Tables: {
+      categories: {
+        Row: {
+          id: string
+          label: string
+          value: string
+          icon: string
+          user_id: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          label: string
+          value: string
+          icon: string
+          user_id: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          label?: string
+          value?: string
+          icon?: string
+          user_id?: string
+          created_at?: string
+          updated_at?: string
+        }
+      }
       accounts: {
         Row: {
           id: string
@@ -59,7 +88,7 @@ export interface Database {
           description: string
           amount: number
           type: 'income' | 'expense' | 'transfer'
-          category?: 'food' | 'transportation' | 'shopping' | 'bills' | 'entertainment' | 'healthcare' | 'education' | 'salary' | 'investment' | 'other' | 'uncategorized' | null
+          category?: string | null
           account_id: string
           date: string
           user_id: string
@@ -71,10 +100,33 @@ export interface Database {
           description?: string
           amount?: number
           type?: 'income' | 'expense' | 'transfer'
-          category?: 'food' | 'transportation' | 'shopping' | 'bills' | 'entertainment' | 'healthcare' | 'education' | 'salary' | 'investment' | 'other' | 'uncategorized' | null
+          category?: string | null
           account_id?: string
           date?: string
           user_id?: string
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      user_settings: {
+        Row: {
+          id: string
+          user_id: string
+          savings_percentage: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          savings_percentage?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          savings_percentage?: number
           created_at?: string
           updated_at?: string
         }

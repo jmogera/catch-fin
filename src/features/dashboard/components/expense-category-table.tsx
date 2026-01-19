@@ -8,15 +8,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Button } from '@/components/ui/button'
+import { ChevronLeft, ChevronRight, PiggyBank } from 'lucide-react'
 import { useTransactions } from '@/hooks/use-transactions'
-import { categories } from '@/features/transactions/data/data'
+import { useCategories } from '@/hooks/use-categories'
+import { convertCategoriesToOptions } from '@/features/transactions/utils/category-helpers'
+import { useMemo } from 'react'
 import { isFuture } from 'date-fns'
 import { HelpCircle } from 'lucide-react'
 
@@ -44,51 +41,106 @@ const months = [
   'Dec',
 ]
 
-export function ExpenseCategoryTable() {
+type ExpenseCategoryTableProps = {
+  selectedYear?: number
+  onYearChange?: (year: number) => void
+}
+
+export function ExpenseCategoryTable({ 
+  selectedYear: propSelectedYear, 
+  onYearChange 
+}: ExpenseCategoryTableProps = {}) {
   const currentYear = new Date().getFullYear()
-  const [selectedYear, setSelectedYear] = useState(currentYear)
+  const [internalSelectedYear, setInternalSelectedYear] = useState(currentYear)
+  const selectedYear = propSelectedYear ?? internalSelectedYear
+  const setSelectedYear = onYearChange ?? setInternalSelectedYear
   const navigate = useNavigate()
   const { transactions } = useTransactions()
+  const { categories: dbCategories } = useCategories()
+  
+  const categories = useMemo(() => convertCategoriesToOptions(dbCategories), [dbCategories])
 
-  // Get income and expense categories
-  const incomeCategories = categories.filter(
-    (cat) => cat.value === 'salary' || cat.value === 'investment'
-  )
-  const expenseCategories = categories.filter(
-    (cat) => cat.value !== 'salary' && cat.value !== 'investment'
-  )
+  // Get income, expense, and savings categories
+  const incomeCategories = categories.filter((cat) => {
+    const isExplicitIncome =
+      cat.value === 'salary' ||
+      cat.value === 'investment' ||
+      cat.value === 'gift-received' ||
+      cat.value === 'gift_received' ||
+      cat.value === 'interest-earned' ||
+      cat.value === 'interest_earned' ||
+      cat.value === 'refund' ||
+      cat.value === 'refunds'
+
+    const labelIndicatesGift = /gift/i.test(cat.label)
+    const labelIndicatesInterest = /interest/i.test(cat.label)
+    const labelIndicatesRefund = /refund/i.test(cat.label)
+
+    return (
+      isExplicitIncome ||
+      labelIndicatesGift ||
+      labelIndicatesInterest ||
+      labelIndicatesRefund
+    )
+  })
+
+  const savingsCategories = categories.filter((cat) => {
+    const isExplicitSavings =
+      cat.value === 'savings' ||
+      cat.value === 'saving' ||
+      cat.value === 'savings-account' ||
+      cat.value === 'savings_account'
+
+    const labelIndicatesSavings = /saving/i.test(cat.label)
+    const valueIndicatesSavings = /saving/i.test(cat.value)
+
+    return isExplicitSavings || labelIndicatesSavings || valueIndicatesSavings
+  })
+
+  // Expense categories: exclude income AND savings categories
+  const expenseCategories = categories.filter((cat) => {
+    const isIncome = incomeCategories.some((incomeCat) => incomeCat.value === cat.value)
+    const isSavings = savingsCategories.some((savingsCat) => savingsCat.value === cat.value)
+    return !isIncome && !isSavings
+  })
 
   const handleCellClick = (
     category: string | undefined,
     monthIndex: number,
-    type: 'income' | 'expense'
+    type: 'income' | 'expense' | 'savings'
   ) => {
     const month = monthIndex + 1 // 1-12 for URL
+    // For savings, show both income and expense transactions with that category
+    const transactionTypes = type === 'savings' ? ['income', 'expense'] : [type]
     navigate({
       to: '/transactions',
       search: {
         page: 1,
         pageSize: 10,
         filter: '',
-        type: [type],
-        category: category ? [category] : undefined, // undefined means uncategorized
+        type: transactionTypes,
+        category: category ? [category] : '__uncategorized__', // special marker for uncategorized
         month,
         year: selectedYear,
       },
     })
   }
 
-  // Calculate income and expenses by category and month
-  const calculateData = () => {
+  // Calculate income, expenses, and savings by category and month
+  // Recalculate when selectedYear or transactions change
+  const { income: incomeData, expense: expenseData, savings: savingsData } = useMemo(() => {
     const incomeData: Record<string, Record<number, number>> = {}
     const expenseData: Record<string, Record<number, number>> = {}
+    const savingsData: Record<string, Record<number, number>> = {}
     const uncategorizedIncomeData: Record<number, number> = {}
     const uncategorizedExpenseData: Record<number, number> = {}
+    const uncategorizedSavingsData: Record<number, number> = {}
 
     // Initialize uncategorized
     for (let month = 0; month < 12; month++) {
       uncategorizedIncomeData[month] = 0
       uncategorizedExpenseData[month] = 0
+      uncategorizedSavingsData[month] = 0
     }
 
     incomeCategories.forEach((category) => {
@@ -99,9 +151,20 @@ export function ExpenseCategoryTable() {
     })
 
     expenseCategories.forEach((category) => {
-      expenseData[category.value] = {}
+      // Double-check: ensure this is not a savings category
+      const isSavings = savingsCategories.some((sc) => sc.value === category.value)
+      if (!isSavings) {
+        expenseData[category.value] = {}
+        for (let month = 0; month < 12; month++) {
+          expenseData[category.value][month] = 0
+        }
+      }
+    })
+
+    savingsCategories.forEach((category) => {
+      savingsData[category.value] = {}
       for (let month = 0; month < 12; month++) {
-        expenseData[category.value][month] = 0
+        savingsData[category.value][month] = 0
       }
     })
 
@@ -119,17 +182,36 @@ export function ExpenseCategoryTable() {
         const category = transaction.category
         const amount = Math.abs(transaction.amount)
 
+        // Check if category is a savings category
+        const isSavingsCategory = savingsCategories.some((sc) => sc.value === category)
+
         if (transaction.type === 'income') {
-          if (!category) {
+          if (isSavingsCategory) {
+            // Savings categories in income transactions
+            if (savingsData[category] && savingsData[category][month] !== undefined) {
+              savingsData[category][month] += amount
+            }
+          } else if (!category) {
             uncategorizedIncomeData[month] += amount
           } else if (incomeData[category] && incomeData[category][month] !== undefined) {
             incomeData[category][month] += amount
           }
         } else if (transaction.type === 'expense') {
-          if (!category) {
+          if (isSavingsCategory) {
+            // Savings categories in expense transactions (negative savings/withdrawals)
+            // NEVER add to expenseData - only to savingsData
+            if (savingsData[category] && savingsData[category][month] !== undefined) {
+              savingsData[category][month] -= amount
+            }
+          } else if (!category) {
+            // Only add to expenseData if it's not a savings category
             uncategorizedExpenseData[month] += amount
-          } else if (expenseData[category] && expenseData[category][month] !== undefined) {
-            expenseData[category][month] += amount
+          } else {
+            // Double-check it's not a savings category before adding to expenseData
+            const isSavings = savingsCategories.some((sc) => sc.value === category)
+            if (!isSavings && expenseData[category] && expenseData[category][month] !== undefined) {
+              expenseData[category][month] += amount
+            }
           }
         }
       })
@@ -137,10 +219,9 @@ export function ExpenseCategoryTable() {
     return {
       income: { categorized: incomeData, uncategorized: uncategorizedIncomeData },
       expense: { categorized: expenseData, uncategorized: uncategorizedExpenseData },
+      savings: { categorized: savingsData, uncategorized: uncategorizedSavingsData },
     }
-  }
-
-  const { income: incomeData, expense: expenseData } = calculateData()
+  }, [transactions, selectedYear, incomeCategories, expenseCategories, savingsCategories])
 
   // Calculate uncategorized totals
   const uncategorizedIncomeTotal = Object.values(incomeData.uncategorized).reduce(
@@ -153,20 +234,23 @@ export function ExpenseCategoryTable() {
   )
 
   // Calculate totals for each month
+  // Note: Net Total = Income - Expenses (savings are excluded from this calculation)
   const calculateMonthTotals = () => {
     const totals: Record<number, { income: number; expense: number; net: number }> = {}
     for (let month = 0; month < 12; month++) {
+      // Calculate income total (excluding savings categories)
       let incomeTotal = incomeData.uncategorized[month] || 0
-      let expenseTotal = expenseData.uncategorized[month] || 0
-
       incomeCategories.forEach((category) => {
         incomeTotal += incomeData.categorized[category.value]?.[month] || 0
       })
 
+      // Calculate expense total (excluding savings categories)
+      let expenseTotal = expenseData.uncategorized[month] || 0
       expenseCategories.forEach((category) => {
         expenseTotal += expenseData.categorized[category.value]?.[month] || 0
       })
 
+      // Net = Income - Expenses (savings are tracked separately)
       totals[month] = {
         income: incomeTotal,
         expense: expenseTotal,
@@ -178,10 +262,28 @@ export function ExpenseCategoryTable() {
 
   const monthTotals = calculateMonthTotals()
 
+  // Calculate savings totals for each month
+  const calculateSavingsTotals = () => {
+    const savingsTotalsByMonth: Record<number, number> = {}
+    for (let month = 0; month < 12; month++) {
+      let savingsTotal = savingsData.uncategorized[month] || 0
+      savingsCategories.forEach((category) => {
+        savingsTotal += savingsData.categorized[category.value]?.[month] || 0
+      })
+      savingsTotalsByMonth[month] = savingsTotal
+    }
+    return savingsTotalsByMonth
+  }
+
+  const savingsTotalsByMonth = calculateSavingsTotals()
+  const totalSavingsRaw = Object.values(savingsTotalsByMonth).reduce((sum, val) => sum + val, 0)
+  const totalSavings = totalSavingsRaw < 0 ? 0 : totalSavingsRaw
+
   // Calculate totals for each category
   const calculateCategoryTotals = () => {
     const incomeTotals: Record<string, number> = {}
     const expenseTotals: Record<string, number> = {}
+    const savingsTotals: Record<string, number> = {}
 
     incomeCategories.forEach((category) => {
       incomeTotals[category.value] = 0
@@ -197,48 +299,37 @@ export function ExpenseCategoryTable() {
       }
     })
 
-    return { income: incomeTotals, expense: expenseTotals }
+    savingsCategories.forEach((category) => {
+      savingsTotals[category.value] = 0
+      for (let month = 0; month < 12; month++) {
+        savingsTotals[category.value] += savingsData.categorized[category.value]?.[month] || 0
+      }
+    })
+
+    return { income: incomeTotals, expense: expenseTotals, savings: savingsTotals }
   }
 
   const categoryTotals = calculateCategoryTotals()
 
-  // Get year options (current year and past years from transactions)
-  const getYearOptions = () => {
-    const years = new Set<number>()
-    transactions.forEach((t) => {
-      years.add(new Date(t.date).getFullYear())
-    })
-    years.add(currentYear)
-    return Array.from(years).sort((a, b) => b - a)
-  }
+  // Calculate total income, expenses, and savings for the selected year
+  const totalIncomeForYear = Object.values(monthTotals).reduce((sum, val) => sum + val.income, 0)
+  const totalExpensesForYear = Object.values(monthTotals).reduce((sum, val) => sum + val.expense, 0)
+  // Savings Total should be Income - Expenses (net savings), not sum of savings category transactions
+  const totalSavingsForYear = totalIncomeForYear - totalExpensesForYear
+  
+  // Calculate percentages
+  const expensePercentageForYear = totalIncomeForYear > 0 ? (totalExpensesForYear / totalIncomeForYear) * 100 : 0
+  const savingsPercentageForYear = totalIncomeForYear > 0 ? (totalSavingsForYear / totalIncomeForYear) * 100 : 0
 
-  const yearOptions = getYearOptions()
   const isCurrentYear = selectedYear === currentYear
 
   return (
     <div className='space-y-4'>
-      <div className='flex items-center justify-between'>
-        <div>
-          <h3 className='text-lg font-semibold'>Income & Expenses by Category</h3>
-          <p className='text-sm text-muted-foreground'>
-            Monthly breakdown of income and expenses by category
-          </p>
-        </div>
-        <Select
-          value={selectedYear.toString()}
-          onValueChange={(value) => setSelectedYear(parseInt(value, 10))}
-        >
-          <SelectTrigger className='w-[180px]'>
-            <SelectValue placeholder='Select year' />
-          </SelectTrigger>
-          <SelectContent>
-            {yearOptions.map((year) => (
-              <SelectItem key={year} value={year.toString()}>
-                {year}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <div>
+        <h3 className='text-lg font-semibold'>Income & Expenses by Category</h3>
+        <p className='text-sm text-muted-foreground'>
+          Monthly breakdown of income and expenses by category
+        </p>
       </div>
 
       <div className='overflow-x-auto rounded-md border'>
@@ -266,6 +357,96 @@ export function ExpenseCategoryTable() {
             </TableRow>
           </TableHeader>
           <TableBody>
+            {/* SAVINGS SECTION */}
+            {/* Savings categories */}
+            {savingsCategories.map((category) => {
+              const categoryTotal = categoryTotals.savings[category.value] || 0
+              return (
+                <TableRow key={category.value} className='bg-blue-50/30 dark:bg-blue-950/5'>
+                  <TableCell className='sticky left-0 z-10 bg-blue-50/30 dark:bg-blue-950/5 font-medium border-r'>
+                    <div className='flex items-center gap-2'>
+                      {category.icon && (
+                        <category.icon className='h-4 w-4 text-muted-foreground' />
+                      )}
+                      {category.label}
+                    </div>
+                  </TableCell>
+                  {months.map((_, monthIndex) => {
+                    const monthDate = new Date(selectedYear, monthIndex, 1)
+                    const isFutureMonth = isCurrentYear && isFuture(monthDate)
+                    const amount = savingsData.categorized[category.value]?.[monthIndex] || 0
+
+                    const displayAmount = amount < 0 ? 0 : amount
+                    return (
+                      <TableCell
+                        key={monthIndex}
+                        onClick={() =>
+                          !isFutureMonth &&
+                          handleCellClick(category.value, monthIndex, 'savings')
+                        }
+                        className={`text-center ${
+                          isFutureMonth
+                            ? 'text-muted-foreground'
+                            : 'text-blue-600 dark:text-blue-400'
+                        } ${
+                          isFutureMonth ? '' : 'cursor-pointer hover:bg-muted/50'
+                        }`}
+                      >
+                        {isFutureMonth
+                          ? '-'
+                          : displayAmount > 0
+                            ? formatCurrency(displayAmount)
+                            : '$0'}
+                      </TableCell>
+                    )
+                  })}
+                  <TableCell className='text-right font-medium text-blue-600 dark:text-blue-400'>
+                    {categoryTotal > 0 ? formatCurrency(categoryTotal) : '$0'}
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+
+            {/* SAVINGS TOTAL ROW */}
+            <TableRow className='bg-blue-50/50 dark:bg-blue-950/10 border-t-2 border-blue-200 dark:border-blue-800'>
+              <TableCell className='sticky left-0 z-10 bg-blue-50/50 dark:bg-blue-950/10 font-semibold border-r'>
+                <div className='flex items-center gap-2'>
+                  <PiggyBank className='h-4 w-4 text-blue-600 dark:text-blue-400' />
+                  <span className='font-semibold'>Savings</span>
+                </div>
+              </TableCell>
+              {months.map((_, monthIndex) => {
+                const monthDate = new Date(selectedYear, monthIndex, 1)
+                const isFutureMonth = isCurrentYear && isFuture(monthDate)
+                // Savings Total = Income - Expenses for that month
+                const savings = monthTotals[monthIndex]?.net || 0
+                const displaySavings = savings < 0 ? 0 : savings
+
+                return (
+                  <TableCell
+                    key={monthIndex}
+                    className={`text-center font-semibold ${
+                      isFutureMonth
+                        ? 'text-muted-foreground'
+                        : 'text-blue-600 dark:text-blue-400'
+                    }`}
+                  >
+                    {isFutureMonth ? '-' : formatCurrency(displaySavings)}
+                  </TableCell>
+                )
+              })}
+              <TableCell className='text-right font-semibold text-blue-600 dark:text-blue-400'>
+                <div className='flex flex-col items-end'>
+                  <div>{totalSavingsForYear > 0 ? formatCurrency(totalSavingsForYear) : '$0'}</div>
+                  {totalIncomeForYear > 0 && (
+                    <div className='text-xs font-normal text-muted-foreground'>
+                      {savingsPercentageForYear.toFixed(1)}% of income
+                    </div>
+                  )}
+                </div>
+              </TableCell>
+            </TableRow>
+
             {/* INCOME SECTION */}
             {/* Uncategorized Income row */}
             <TableRow className='bg-green-50/50 dark:bg-green-950/10'>
@@ -387,15 +568,29 @@ export function ExpenseCategoryTable() {
                 )
               })}
               <TableCell className='text-right font-medium text-red-600 dark:text-red-400'>
-                {uncategorizedExpenseTotal > 0
-                  ? formatCurrency(uncategorizedExpenseTotal)
-                  : '$0'}
+                <div className='flex flex-col items-end'>
+                  <div>
+                    {uncategorizedExpenseTotal > 0
+                      ? formatCurrency(uncategorizedExpenseTotal)
+                      : '$0'}
+                  </div>
+                  {totalIncomeForYear > 0 && uncategorizedExpenseTotal > 0 && (
+                    <div className='text-xs font-normal text-muted-foreground'>
+                      {((uncategorizedExpenseTotal / totalIncomeForYear) * 100).toFixed(1)}% of income
+                    </div>
+                  )}
+                </div>
               </TableCell>
             </TableRow>
             {/* Expense categories */}
-            {expenseCategories.map((category) => {
-              const categoryTotal = categoryTotals.expense[category.value] || 0
-              return (
+            {expenseCategories
+              .filter((cat) => {
+                // Final safeguard: ensure this is not a savings category
+                return !savingsCategories.some((sc) => sc.value === cat.value)
+              })
+              .map((category) => {
+                const categoryTotal = categoryTotals.expense[category.value] || 0
+                return (
                 <TableRow key={category.value}>
                   <TableCell className='sticky left-0 z-10 bg-background font-medium border-r'>
                     <div className='flex items-center gap-2'>
@@ -432,7 +627,14 @@ export function ExpenseCategoryTable() {
                     )
                   })}
                   <TableCell className='text-right font-medium text-red-600 dark:text-red-400'>
-                    {categoryTotal > 0 ? formatCurrency(categoryTotal) : '$0'}
+                    <div className='flex flex-col items-end'>
+                      <div>{categoryTotal > 0 ? formatCurrency(categoryTotal) : '$0'}</div>
+                      {totalIncomeForYear > 0 && categoryTotal > 0 && (
+                        <div className='text-xs font-normal text-muted-foreground'>
+                          {((categoryTotal / totalIncomeForYear) * 100).toFixed(1)}% of income
+                        </div>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               )

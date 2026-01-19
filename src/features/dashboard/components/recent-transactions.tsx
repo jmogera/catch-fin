@@ -1,6 +1,8 @@
 import { format } from 'date-fns'
 import { type Transaction } from '@/features/transactions/data/schema'
-import { categories } from '@/features/transactions/data/data'
+import { useCategories } from '@/hooks/use-categories'
+import { convertCategoriesToOptions } from '@/features/transactions/utils/category-helpers'
+import { useMemo } from 'react'
 
 const formatCurrency = (amount: number) => {
   return new Intl.NumberFormat('en-US', {
@@ -14,6 +16,9 @@ type RecentTransactionsProps = {
 }
 
 export function RecentTransactions({ transactions }: RecentTransactionsProps) {
+  const { categories: dbCategories } = useCategories()
+  const categories = useMemo(() => convertCategoriesToOptions(dbCategories), [dbCategories])
+  
   return (
     <div className='space-y-4'>
       {transactions.map((transaction) => {

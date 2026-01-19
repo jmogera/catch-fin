@@ -23,10 +23,14 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { DataTablePagination, DataTableToolbar } from '@/components/data-table'
-import { categories, transactionTypes } from '../data/data'
+import { transactionTypes } from '../data/data'
+import { Circle } from 'lucide-react'
 import { type Transaction } from '../data/schema'
-import { transactionsColumns as columns, setTransactionUpdateCallback } from './transactions-columns'
+import { getTransactionsColumns, setTransactionUpdateCallback } from './transactions-columns'
 import { useTransactions } from '@/hooks/use-transactions'
+import { TransactionsBulkActions } from './transactions-bulk-actions'
+import { useCategories } from '@/hooks/use-categories'
+import { convertCategoriesToOptions } from '../utils/category-helpers'
 
 const route = getRouteApi('/_authenticated/transactions/')
 
@@ -41,6 +45,35 @@ export function TransactionsTable({ data }: DataTableProps) {
   const [localData, setLocalData] = useState(data)
   const search = route.useSearch()
   const { update: updateTransactionMutation } = useTransactions()
+  const { categories: dbCategories } = useCategories()
+  
+  // Convert database categories to options format (without uncategorized for cell dropdown)
+  const categoriesForCells = useMemo(() => {
+    return convertCategoriesToOptions(dbCategories)
+  }, [dbCategories])
+
+  // Categories for filter (includes uncategorized at top)
+  const categoriesForFilter = useMemo(() => {
+    // Check if uncategorized already exists in database categories
+    const hasUncategorizedInDb = dbCategories.some(
+      (cat) => cat.value === 'uncategorized' || cat.value === '__uncategorized__'
+    )
+    
+    // Filter out uncategorized from converted categories if it exists
+    const filteredCells = hasUncategorizedInDb
+      ? categoriesForCells.filter((cat) => cat.value !== 'uncategorized' && cat.value !== '__uncategorized__')
+      : categoriesForCells
+    
+    return [
+      {
+        label: 'Uncategorized',
+        value: '__uncategorized__',
+        icon: Circle,
+      },
+      ...filteredCells,
+    ]
+  }, [categoriesForCells, dbCategories])
+
 
   // Update local data when prop changes
   useEffect(() => {
@@ -82,17 +115,33 @@ export function TransactionsTable({ data }: DataTableProps) {
     }
     
     // Handle category filter
-    // If category is undefined or empty array, show uncategorized transactions
-    if (search.category === undefined || (Array.isArray(search.category) && search.category.length === 0)) {
-      return !transaction.category
+    // If category is explicitly set to empty array, show uncategorized transactions
+    // If category is undefined, show all transactions
+    if (Array.isArray(search.category)) {
+      if (search.category.length === 0) {
+        // Empty array means show only uncategorized
+        return !transaction.category
+      } else {
+        // Array with values means show those categories
+        // Handle __uncategorized__ marker
+        const hasUncategorized = search.category.includes('__uncategorized__')
+        const hasRegularCategories = search.category.some(cat => cat !== '__uncategorized__')
+        
+        if (hasUncategorized && hasRegularCategories) {
+          // Show both uncategorized and selected categories
+          return !transaction.category || search.category.includes(transaction.category)
+        } else if (hasUncategorized) {
+          // Show only uncategorized
+          return !transaction.category
+        } else {
+          // Show only selected categories
+          return transaction.category && search.category.includes(transaction.category)
+        }
+      }
     }
     
-    // If category is specified, match it
-    if (Array.isArray(search.category) && search.category.length > 0) {
-      return transaction.category && search.category.includes(transaction.category)
-    }
-    
-      return true
+    // category is undefined - show all transactions
+    return true
     })
   }, [localData, search.month, search.year, search.category])
 
@@ -114,6 +163,9 @@ export function TransactionsTable({ data }: DataTableProps) {
       { columnId: 'category', searchKey: 'category', type: 'array' },
     ],
   })
+
+  // Create columns with current categories
+  const columns = useMemo(() => getTransactionsColumns(categoriesForCells), [categoriesForCells])
 
   const table = useReactTable({
     data: filteredData,
@@ -171,7 +223,7 @@ export function TransactionsTable({ data }: DataTableProps) {
           {
             columnId: 'category',
             title: 'Category',
-            options: categories,
+            options: categoriesForFilter,
           },
         ]}
       />
@@ -239,6 +291,7 @@ export function TransactionsTable({ data }: DataTableProps) {
         </Table>
       </div>
       <DataTablePagination table={table} className='mt-auto' />
+      <TransactionsBulkActions table={table} />
     </div>
   )
 }

@@ -6,19 +6,8 @@ export const transactionTypeSchema = z.union([
   z.literal('transfer'),
 ])
 
-export const transactionCategorySchema = z.union([
-  z.literal('food'),
-  z.literal('transportation'),
-  z.literal('shopping'),
-  z.literal('bills'),
-  z.literal('entertainment'),
-  z.literal('healthcare'),
-  z.literal('education'),
-  z.literal('salary'),
-  z.literal('investment'),
-  z.literal('other'),
-  z.literal('uncategorized'),
-])
+// Category can be any string (from database) or undefined
+export const transactionCategorySchema = z.string().optional()
 
 export const transactionSchema = z.object({
   id: z.string(),

@@ -10,17 +10,30 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { format } from 'date-fns'
-import { categories, transactionTypes } from '../data/data'
+import { transactionTypes } from '../data/data'
 import { type Transaction } from '../data/schema'
 import { DataTableRowActions } from './data-table-row-actions'
+import type { CategoryOption } from '../utils/category-helpers'
+import { Circle } from 'lucide-react'
 
 // Callback to update transactions
 let updateTransactionCallback: ((id: string, updates: Partial<Transaction>) => void) | null = null
+
+// Categories will be passed dynamically - use a ref to ensure it's always current
+let currentCategoriesRef: { current: CategoryOption[] } = { current: [] }
 
 export function setTransactionUpdateCallback(
   callback: ((id: string, updates: Partial<Transaction>) => void) | null
 ) {
   updateTransactionCallback = callback
+}
+
+export function setCategories(categories: CategoryOption[]) {
+  currentCategoriesRef.current = categories
+}
+
+export function getCategories(): CategoryOption[] {
+  return currentCategoriesRef.current
 }
 
 const formatCurrency = (amount: number) => {
@@ -30,7 +43,8 @@ const formatCurrency = (amount: number) => {
   }).format(amount)
 }
 
-export const transactionsColumns: ColumnDef<Transaction>[] = [
+export function getTransactionsColumns(categories: CategoryOption[] = []): ColumnDef<Transaction>[] {
+  return [
   {
     id: 'select',
     header: ({ table }) => (
@@ -91,6 +105,26 @@ export const transactionsColumns: ColumnDef<Transaction>[] = [
       <DataTableColumnHeader column={column} title='Category' />
     ),
     meta: { className: 'ps-1', tdClassName: 'ps-4' },
+    filterFn: (row, _columnId, filterValue: string[]) => {
+      if (!Array.isArray(filterValue) || filterValue.length === 0) {
+        return true
+      }
+      
+      const hasUncategorized = filterValue.includes('__uncategorized__')
+      const regularCategories = filterValue.filter(cat => cat !== '__uncategorized__')
+      const transactionCategory = row.getValue('category') as string | undefined
+      
+      if (hasUncategorized && regularCategories.length > 0) {
+        // Show both uncategorized and selected categories
+        return !transactionCategory || regularCategories.includes(transactionCategory)
+      } else if (hasUncategorized) {
+        // Show only uncategorized
+        return !transactionCategory
+      } else {
+        // Show only selected categories
+        return transactionCategory && regularCategories.includes(transactionCategory)
+      }
+    },
     cell: ({ row }) => {
       const transaction = row.original
       const currentValue = transaction.category || 'uncategorized'
@@ -208,4 +242,8 @@ export const transactionsColumns: ColumnDef<Transaction>[] = [
     id: 'actions',
     cell: ({ row }) => <DataTableRowActions row={row} />,
   },
-]
+  ]
+}
+
+// Export default columns for backward compatibility (will be empty until categories are set)
+export const transactionsColumns = getTransactionsColumns([])

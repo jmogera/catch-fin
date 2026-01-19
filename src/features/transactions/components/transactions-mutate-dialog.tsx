@@ -27,10 +27,13 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { transactionCategorySchema } from '../data/schema'
-import { categories } from '../data/data'
 import { type Transaction } from '../data/schema'
 import { useTransactions } from './transactions-provider'
 import { useTransactions as useTransactionsHook } from '@/hooks/use-transactions'
+import { useCategories } from '@/hooks/use-categories'
+import { convertCategoriesToOptions } from '../utils/category-helpers'
+import { Circle } from 'lucide-react'
+import { useMemo } from 'react'
 
 const formSchema = z.object({
   category: transactionCategorySchema.optional(),
@@ -41,7 +44,20 @@ type TransactionForm = z.infer<typeof formSchema>
 export function TransactionsMutateDialog() {
   const { open, setOpen, currentRow } = useTransactions()
   const { update: updateTransaction } = useTransactionsHook()
+  const { categories: dbCategories } = useCategories()
   const isUpdate = !!currentRow && open === 'update'
+
+  const categories = useMemo(() => {
+    const converted = convertCategoriesToOptions(dbCategories)
+    return [
+      {
+        label: 'Uncategorized',
+        value: 'uncategorized',
+        icon: Circle,
+      },
+      ...converted,
+    ]
+  }, [dbCategories])
 
   const form = useForm<TransactionForm>({
     resolver: zodResolver(formSchema),

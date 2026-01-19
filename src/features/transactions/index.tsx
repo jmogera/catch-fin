@@ -36,16 +36,28 @@ export function Transactions() {
   const navigate = route.useNavigate()
   const { transactions, isLoading, isError, error } = useTransactions()
 
-  const hasFilters = search.month || search.year || (search.category !== undefined && (!Array.isArray(search.category) || search.category.length === 0))
+  const hasFilters = search.month || search.year || (Array.isArray(search.category) && search.category.length === 0)
 
   const clearFilters = () => {
     navigate({
+      replace: true,
       search: {
         page: 1,
         pageSize: 10,
         filter: '',
         type: [],
-        category: [],
+        // Don't include category, month, year - let them be undefined
+      },
+    })
+  }
+
+  const clearUncategorized = () => {
+    navigate({
+      replace: true,
+      search: (prev) => {
+        const next = { ...prev }
+        delete next.category
+        return next
       },
     })
   }
@@ -110,14 +122,14 @@ export function Transactions() {
                     </Button>
                   </Badge>
                 )}
-                {(search.category === undefined || (Array.isArray(search.category) && search.category.length === 0)) && (
+                {Array.isArray(search.category) && search.category.length === 0 && (
                   <Badge variant='secondary' className='gap-1'>
                     Uncategorized
                     <Button
                       variant='ghost'
                       size='sm'
                       className='h-4 w-4 p-0 hover:bg-transparent'
-                      onClick={clearFilters}
+                      onClick={clearUncategorized}
                     >
                       <X className='h-3 w-3' />
                     </Button>
