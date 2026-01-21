@@ -12,22 +12,185 @@ import { Search } from '@/components/search'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { useTransactions } from '@/hooks/use-transactions'
 import { useCategories } from '@/hooks/use-categories'
-import { useUserSettings } from '@/hooks/use-user-settings'
+import { useYearlySavingsGoal } from '@/hooks/use-yearly-savings-goals'
+import { useBudgetPlan } from '@/hooks/use-budget-plan'
 import { convertCategoriesToOptions } from '@/features/transactions/utils/category-helpers'
-import { Target, ChevronLeft, ChevronRight, Lock, Unlock } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import {
+  Target,
+  ChevronLeft,
+  ChevronRight,
+  Lock,
+  Unlock,
+  TrendingDown,
+  Percent,
+  Info,
+  CheckCircle2,
+  AlertCircle,
+  Circle,
+} from 'lucide-react'
+import { useEffect, useMemo, useState, useRef, useCallback, memo } from 'react'
 import { cn, formatCurrency } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
+import { Slider } from '@/components/ui/slider'
+
+// Memoized Slider component to prevent infinite re-renders
+const SavingsSlider = memo(
+  ({
+    value,
+    onValueChange,
+    onValueCommit,
+    disabled,
+  }: {
+    value: number[]
+    onValueChange: (value: number[]) => void
+    onValueCommit: (value: number[]) => void
+    disabled?: boolean
+  }) => {
+    // Use refs to prevent callback recreation
+    const onValueChangeRef = useRef(onValueChange)
+    const onValueCommitRef = useRef(onValueCommit)
+    
+    useEffect(() => {
+      onValueChangeRef.current = onValueChange
+      onValueCommitRef.current = onValueCommit
+    }, [onValueChange, onValueCommit])
+
+    const handleValueChange = useCallback((val: number[]) => {
+      onValueChangeRef.current(val)
+    }, [])
+
+    const handleValueCommit = useCallback((val: number[]) => {
+      onValueCommitRef.current(val)
+    }, [])
+
+    return (
+      <Slider
+        value={value}
+        onValueChange={handleValueChange}
+        onValueCommit={handleValueCommit}
+        min={0}
+        max={100}
+        step={0.1}
+        disabled={disabled}
+        className='w-full'
+      />
+    )
+  },
+  (prevProps, nextProps) => {
+    // Custom comparison to prevent unnecessary re-renders
+    return (
+      prevProps.value[0] === nextProps.value[0] &&
+      prevProps.disabled === nextProps.disabled
+    )
+  }
+)
+SavingsSlider.displayName = 'SavingsSlider'
+
+// Memoized Category Cut Slider component
+const CategoryCutSlider = memo(
+  ({
+    value,
+    onValueChange,
+    disabled,
+  }: {
+    value: number
+    onValueChange: (value: number) => void
+    disabled?: boolean
+  }) => {
+    const onValueChangeRef = useRef(onValueChange)
+    
+    useEffect(() => {
+      onValueChangeRef.current = onValueChange
+    }, [onValueChange])
+
+    const handleValueChange = useCallback((val: number[]) => {
+      onValueChangeRef.current(val[0])
+    }, [])
+
+    return (
+      <div className='flex items-center gap-2'>
+        <Slider
+          value={[value]}
+          onValueChange={handleValueChange}
+          min={0}
+          max={100}
+          step={0.5}
+          disabled={disabled}
+          className='w-24'
+        />
+        <span className='w-12 text-right text-xs font-medium'>
+          {value.toFixed(1)}%
+        </span>
+      </div>
+    )
+  },
+  (prevProps, nextProps) => {
+    return (
+      prevProps.value === nextProps.value &&
+      prevProps.disabled === nextProps.disabled
+    )
+  }
+)
+CategoryCutSlider.displayName = 'CategoryCutSlider'
 
 export function Budget() {
   const { transactions, isLoading: transactionsLoading } = useTransactions()
   const { categories: dbCategories } = useCategories()
-  const { settings } = useUserSettings()
 
   const currentYear = new Date().getFullYear()
 
   const [selectedYear, setSelectedYear] = useState(currentYear)
+  const { goal, updateGoal, isUpdating } = useYearlySavingsGoal(selectedYear)
+  const { plan: savedPlan, updatePlan, isUpdating: isSavingPlan } = useBudgetPlan(selectedYear)
+  
+  // Local slider value - only sync from goal when year changes
+  const [sliderValue, setSliderValue] = useState<number[]>([20])
 
+  // Track the last synced year to prevent re-syncing
+  const lastSyncedYearRef = useRef(selectedYear)
+  const lastSyncedGoalIdRef = useRef<string | undefined>(undefined)
+  const isUserInteractingRef = useRef(false)
+  
+  // Only sync when year changes or goal first loads (not on subsequent goal updates)
+  useEffect(() => {
+    // Don't sync if user is currently interacting with slider
+    if (isUserInteractingRef.current) return
+    
+    const yearChanged = selectedYear !== lastSyncedYearRef.current
+    const goalFirstLoad = goal && goal.id !== lastSyncedGoalIdRef.current
+    
+    if (yearChanged) {
+      lastSyncedYearRef.current = selectedYear
+      lastSyncedGoalIdRef.current = undefined // Reset to allow new goal to sync
+    }
+    
+    if (yearChanged || goalFirstLoad) {
+      if (goal) {
+        setSliderValue([goal.savingsPercentage])
+        lastSyncedGoalIdRef.current = goal.id
+      } else {
+        setSliderValue([20])
+      }
+    }
+    // Only depend on selectedYear and goal.id, not goal.savingsPercentage
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedYear, goal?.id])
+  
+  // Stable callbacks
+  const handleSliderChange = useCallback((value: number[]) => {
+    isUserInteractingRef.current = true
+    setSliderValue(value)
+  }, [])
+  
+  const handleSliderCommit = useCallback((value: number[]) => {
+    updateGoal(value[0])
+    // Reset interaction flag after a delay to allow query to update
+    setTimeout(() => {
+      isUserInteractingRef.current = false
+    }, 200)
+  }, [updateGoal])
+  
   const yearOptions = useMemo(() => {
     const years = new Set<number>()
     transactions.forEach((t) => {
@@ -111,7 +274,7 @@ export function Budget() {
     })
   }, [categories, incomeCategories, savingsCategories])
 
-  // Filter to selected year
+  // Filter to selected year (exclude savings type - they're calculated separately)
   const yearTransactions = useMemo(
     () =>
       transactions.filter((t) => {
@@ -120,6 +283,16 @@ export function Budget() {
           (t.type === 'income' || t.type === 'expense') &&
           tDate.getFullYear() === selectedYear
         )
+      }),
+    [transactions, selectedYear]
+  )
+  
+  // Calculate savings from explicit savings-type transactions
+  const savingsTransactions = useMemo(
+    () =>
+      transactions.filter((t) => {
+        const tDate = new Date(t.date)
+        return t.type === 'savings' && tDate.getFullYear() === selectedYear
       }),
     [transactions, selectedYear]
   )
@@ -178,7 +351,11 @@ export function Budget() {
       uncategorizedExpenses +
       Object.values(expenseDataByCategory).reduce((sum, val) => sum + val, 0)
 
-    const savingsCalc = totalIncomeCalc - totalExpensesCalc
+    // Savings = sum of all transactions with type='savings' (not income - expenses)
+    const savingsCalc = savingsTransactions.reduce(
+      (sum, t) => sum + Math.abs(t.amount),
+      0
+    )
     const savingsPct =
       totalIncomeCalc > 0 ? (savingsCalc / totalIncomeCalc) * 100 : 0
 
@@ -189,22 +366,135 @@ export function Budget() {
       savingsPercentage: savingsPct,
       expenseByCategory: expenseDataByCategory,
     }
-  }, [categories, incomeCategories, savingsCategories, expenseCategories, yearTransactions])
+  }, [categories, incomeCategories, savingsCategories, expenseCategories, yearTransactions, savingsTransactions])
 
-  const targetSavingsPercentage = settings?.savingsPercentage ?? 20
-  const targetSavingsAmount = totalIncome * (targetSavingsPercentage / 100)
+  // Calculate average income (across all years, excluding current year) - declared early
+  const averageIncome = useMemo(() => {
+    const incomeByYear: Record<number, number> = {}
+
+    transactions.forEach((t) => {
+      if (t.type === 'income') {
+        const tDate = new Date(t.date)
+        const year = tDate.getFullYear()
+        if (year !== selectedYear) {
+          if (!incomeByYear[year]) {
+            incomeByYear[year] = 0
+          }
+          incomeByYear[year] += Math.abs(t.amount)
+        }
+      }
+    })
+
+    const values = Object.values(incomeByYear).filter(v => v > 0)
+    return values.length > 0
+      ? values.reduce((sum, val) => sum + val, 0) / values.length
+      : 0
+  }, [transactions, selectedYear])
+
+  const targetSavingsPercentage = sliderValue[0]
+  // Use average income for target calculations
+  const targetSavingsAmount = averageIncome * (targetSavingsPercentage / 100)
+  // For comparison, calculate what current savings would be as % of average income
+  const savingsPercentageOfAvgIncome = averageIncome > 0 ? (savings / averageIncome) * 100 : 0
   const savingsDifference = savings - targetSavingsAmount
-  const percentageDifference = savingsPercentage - targetSavingsPercentage
+  const percentageDifference = savingsPercentageOfAvgIncome - targetSavingsPercentage
   const isBehindTarget = savingsDifference < 0
   const expenseReductionNeeded = isBehindTarget ? Math.abs(savingsDifference) : 0
   const expenseReductionPercentage =
-    totalIncome > 0 ? (expenseReductionNeeded / totalIncome) * 100 : 0
+    averageIncome > 0 ? (expenseReductionNeeded / averageIncome) * 100 : 0
 
   const targetExtraSavingsPct = isBehindTarget
-    ? targetSavingsPercentage - savingsPercentage
+    ? targetSavingsPercentage - savingsPercentageOfAvgIncome
     : 0
 
-  // Build per-category reduction plan when behind target
+  // Calculate monthly savings needed to reach target
+  const currentDate = new Date()
+  const currentMonth = currentDate.getMonth() // 0-11
+  const isCurrentYear = selectedYear === currentYear
+  const remainingMonths = isCurrentYear ? 12 - currentMonth : 12
+  const monthlySavingsNeeded = remainingMonths > 0 && isBehindTarget
+    ? expenseReductionNeeded / remainingMonths
+    : 0
+
+  // Category budgets state - declared early so it can be used in useMemo hooks
+  const [categoryBudgets, setCategoryBudgets] = useState<Record<string, number>>({})
+
+  // Base monthly savings goal - user-defined target
+  const [baseMonthlySavingsGoal, setBaseMonthlySavingsGoal] = useState<number>(0)
+
+  // Calculate previous year spending per category
+  const previousYearSpending = useMemo(() => {
+    const prevYear = selectedYear - 1
+    const prevYearTransactions = transactions.filter((t) => {
+      const tDate = new Date(t.date)
+      return (
+        t.type === 'expense' &&
+        tDate.getFullYear() === prevYear
+      )
+    })
+
+    const spending: Record<string, number> = {}
+    expenseCategories.forEach((cat) => {
+      spending[cat.value] = 0
+    })
+
+    prevYearTransactions.forEach((t) => {
+      const category = t.category
+      if (category && spending[category] !== undefined) {
+        spending[category] += Math.abs(t.amount)
+      }
+    })
+
+    return spending
+  }, [transactions, selectedYear, expenseCategories])
+
+  // Calculate average spending per category (across all years)
+  const averageSpending = useMemo(() => {
+    const yearSpending: Record<string, number[]> = {}
+    expenseCategories.forEach((cat) => {
+      yearSpending[cat.value] = []
+    })
+
+    // Group spending by year and category
+    const spendingByYear: Record<number, Record<string, number>> = {}
+    transactions.forEach((t) => {
+      if (t.type === 'expense') {
+        const tDate = new Date(t.date)
+        const year = tDate.getFullYear()
+        if (!spendingByYear[year]) {
+          spendingByYear[year] = {}
+          expenseCategories.forEach((cat) => {
+            spendingByYear[year][cat.value] = 0
+          })
+        }
+        const category = t.category
+        if (category && spendingByYear[year][category] !== undefined) {
+          spendingByYear[year][category] += Math.abs(t.amount)
+        }
+      }
+    })
+
+    // Calculate average for each category
+    const averages: Record<string, number> = {}
+    expenseCategories.forEach((cat) => {
+      const values: number[] = []
+      Object.keys(spendingByYear).forEach((yearStr) => {
+        const year = parseInt(yearStr)
+        if (year !== selectedYear && spendingByYear[year][cat.value] > 0) {
+          values.push(spendingByYear[year][cat.value])
+        }
+      })
+      averages[cat.value] =
+        values.length > 0
+          ? values.reduce((sum, val) => sum + val, 0) / values.length
+          : 0
+    })
+
+    return averages
+  }, [transactions, selectedYear, expenseCategories])
+
+  // Build per-category reduction plan
+  // Reduction % is based on average spending, not current spending
   const reductionPlan = useMemo(() => {
     if (!isBehindTarget || totalExpenses <= 0 || expenseReductionNeeded <= 0) {
       return []
@@ -212,25 +502,31 @@ export function Budget() {
 
     return expenseCategories
       .map((cat) => {
-        const amount = expenseByCategory[cat.value] ?? 0
-        if (amount <= 0) return null
+        const currentAmount = expenseByCategory[cat.value] ?? 0
+        const avgAmount = averageSpending[cat.value] ?? 0
+        
+        // Skip if no average spending (can't calculate reduction)
+        if (avgAmount <= 0) return null
 
-        const shareOfExpenses = amount / totalExpenses
-        const reductionAmount = expenseReductionNeeded * shareOfExpenses
-        const reductionPctOfCategory =
-          amount > 0 ? (reductionAmount / amount) * 100 : 0
-        const savingsPctOfIncome =
-          expenseReductionPercentage * shareOfExpenses
+      // Calculate reduction based on average spending
+      // Default reduction % is proportional to how much this category needs to contribute
+      // Use average spending total for share calculation
+      const avgTotalExpenses = Object.values(averageSpending).reduce((sum, val) => sum + val, 0)
+      const shareOfExpenses = avgTotalExpenses > 0 ? avgAmount / avgTotalExpenses : 0
+      const targetReductionAmount = expenseReductionNeeded * shareOfExpenses
+      const defaultReductionPct = avgAmount > 0 
+        ? (targetReductionAmount / avgAmount) * 100 
+        : 0
 
-        return {
-          label: cat.label,
-          value: cat.value,
-          currentAmount: amount,
-          shareOfExpenses,
-          reductionAmount,
-          reductionPctOfCategory,
-          savingsPctOfIncome,
-        }
+      return {
+        label: cat.label,
+        value: cat.value,
+        currentAmount,
+        avgAmount,
+        shareOfExpenses,
+        defaultReductionPct,
+        savingsPctOfIncome: expenseReductionPercentage * shareOfExpenses,
+      }
       })
       .filter((row): row is NonNullable<typeof row> => row !== null)
       .sort((a, b) => b.currentAmount - a.currentAmount)
@@ -241,6 +537,8 @@ export function Budget() {
     expenseCategories,
     expenseByCategory,
     expenseReductionPercentage,
+    averageSpending,
+    averageIncome,
   ])
 
   // Allow user to adjust cuts per category
@@ -250,53 +548,102 @@ export function Budget() {
 
   const [lockedCategories, setLockedCategories] = useState<string[]>([])
 
-  // Initialize custom cuts from computed plan when it changes
+  // Track if we're loading vs user making changes
+  const isLoadingPlanRef = useRef(false)
+
+  // Load saved plan from database or initialize from computed plan
   useEffect(() => {
-    if (!isBehindTarget || reductionPlan.length === 0) {
+    isLoadingPlanRef.current = true
+
+    if (savedPlan) {
+      // Load saved plan
+      setCustomCuts(savedPlan.customCuts)
+      setLockedCategories(savedPlan.lockedCategories)
+      setCategoryBudgets(savedPlan.categoryBudgets || {})
+      setBaseMonthlySavingsGoal(savedPlan.baseMonthlySavingsGoal || 0)
+    } else if (!isBehindTarget || reductionPlan.length === 0) {
+      // No saved plan and no reduction needed
       setCustomCuts([])
+      setLockedCategories([])
+      setCategoryBudgets({})
+      setBaseMonthlySavingsGoal(0)
+    } else {
+      // Initialize from computed plan (only if no saved plan exists)
+      setCustomCuts(
+        reductionPlan.map((row) => ({
+          value: row.value,
+          cutPct: row.defaultReductionPct ?? 0,
+        }))
+      )
+      setLockedCategories([])
+      setCategoryBudgets({})
+      setBaseMonthlySavingsGoal(0)
+    }
+
+    // Reset loading flag after state updates
+    setTimeout(() => {
+      isLoadingPlanRef.current = false
+    }, 100)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedPlan?.id, isBehindTarget, reductionPlan.length, selectedYear])
+
+  // Save plan to database when customCuts, lockedCategories, categoryBudgets, or baseMonthlySavingsGoal change (debounced)
+  useEffect(() => {
+    if (isLoadingPlanRef.current) {
       return
     }
-    setCustomCuts(
-      reductionPlan.map((row) => ({
-        value: row.value,
-        cutPct: row.reductionPctOfCategory,
-      }))
-    )
-  }, [isBehindTarget, reductionPlan])
+
+    const timeoutId = setTimeout(() => {
+      updatePlan({
+        customCuts,
+        lockedCategories,
+        categoryBudgets,
+        baseMonthlySavingsGoal,
+      })
+    }, 1000) // Debounce by 1 second
+
+    return () => clearTimeout(timeoutId)
+  }, [customCuts, lockedCategories, categoryBudgets, baseMonthlySavingsGoal, updatePlan])
 
   const userPlan = useMemo(() => {
-    if (!isBehindTarget || reductionPlan.length === 0 || totalIncome <= 0) {
+    if (reductionPlan.length === 0 || averageIncome <= 0) {
       return {
         rows: [] as (typeof reductionPlan)[number][],
         totalSavingsPct: 0,
       }
     }
 
+    const monthlyIncome = averageIncome / 12
+
     const rows = reductionPlan.map((row) => {
       const isLocked = lockedCategories.includes(row.value)
       const custom = customCuts.find((c) => c.value === row.value)
-      const baseCutPct = custom ? custom.cutPct : row.reductionPctOfCategory
+      const baseCutPct = custom ? custom.cutPct : (row.defaultReductionPct ?? 0)
       const cutPct = isLocked ? 0 : baseCutPct
-      const reductionAmount = (row.currentAmount * cutPct) / 100
-      const savingsPctOfIncome =
-        totalIncome > 0 ? (reductionAmount / totalIncome) * 100 : 0
+
+      // Calculate monthly average and reduction
+      const avgMonthlyAmount = row.avgAmount / 12
+      const monthlyReductionAmount = (avgMonthlyAmount * cutPct) / 100
+      const monthlySavingsPctOfIncome =
+        monthlyIncome > 0 ? (monthlyReductionAmount / monthlyIncome) * 100 : 0
 
       return {
         ...row,
         isLocked,
         cutPct,
-        reductionAmount,
-        savingsPctOfIncome,
+        avgMonthlyAmount,
+        monthlyReductionAmount,
+        monthlySavingsPctOfIncome,
       }
     })
 
     const totalSavingsPct = rows.reduce(
-      (sum, r) => sum + r.savingsPctOfIncome,
+      (sum, r) => sum + r.monthlySavingsPctOfIncome,
       0
     )
 
     return { rows, totalSavingsPct }
-  }, [isBehindTarget, reductionPlan, customCuts, totalIncome])
+  }, [reductionPlan, customCuts, averageIncome, lockedCategories])
 
   if (transactionsLoading) {
     return (
@@ -334,7 +681,7 @@ export function Budget() {
           <h1 className='text-2xl font-bold tracking-tight'>Budget</h1>
           <div className='flex items-center gap-2'>
             <span className='text-sm text-muted-foreground'>
-              Savings target vs actual for
+              Year
             </span>
             <button
               type='button'
@@ -358,123 +705,150 @@ export function Budget() {
           </div>
         </div>
 
-        <div className='grid gap-4 lg:grid-cols-2'>
-          <Card className='border-blue-200 bg-blue-50/50 dark:border-blue-900 dark:bg-blue-950/20'>
-            <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-2'>
-              <CardTitle className='text-sm font-medium'>
-                Savings Target
-              </CardTitle>
-              <Target className='h-4 w-4 text-blue-600' />
-            </CardHeader>
-            <CardContent>
-              <div className='space-y-3'>
-                <div className='flex items-baseline justify-between'>
-                  <span className='text-sm text-muted-foreground'>Target:</span>
-                  <span className='text-lg font-semibold text-blue-600'>
-                    {targetSavingsPercentage.toFixed(1)}%
-                  </span>
-                </div>
-                <div className='flex items-baseline justify-between'>
-                  <span className='text-sm text-muted-foreground'>
-                    Current:
-                  </span>
-                  <span
-                    className={`text-lg font-semibold ${
-                      isBehindTarget ? 'text-red-600' : 'text-green-600'
-                    }`}
-                  >
-                    {savingsPercentage.toFixed(1)}%
-                  </span>
-                </div>
-                <div className='flex items-baseline justify-between text-sm'>
-                  <span className='text-muted-foreground'>Income:</span>
-                  <span>{formatCurrency(totalIncome)}</span>
-                </div>
-                <div className='flex items-baseline justify-between text-sm'>
-                  <span className='text-muted-foreground'>Savings:</span>
-                  <span>{formatCurrency(savings)}</span>
-                </div>
-                <div className='flex items-baseline justify-between text-sm'>
-                  <span className='text-muted-foreground'>Target amount:</span>
-                  <span>{formatCurrency(targetSavingsAmount)}</span>
-                </div>
-
-                {!isBehindTarget && savingsDifference > 0 && (
-                  <div className='mt-3 rounded-md border border-green-200 bg-green-50 p-3 text-sm dark:border-green-900 dark:bg-green-950/20'>
-                    <p className='font-medium text-green-900 dark:text-green-100'>
-                      Exceeding target by {percentageDifference.toFixed(1)}% (
-                      {formatCurrency(savingsDifference)})
-                    </p>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {isBehindTarget && (
-          <div className='mt-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm dark:border-red-900 dark:bg-red-950/20'>
-            <p className='font-medium text-red-900 dark:text-red-100'>
-              Behind target by {Math.abs(percentageDifference).toFixed(1)}%
-            </p>
-            <p className='text-xs text-red-700 dark:text-red-300'>
-              Reduce expenses by {formatCurrency(expenseReductionNeeded)} (
-              {targetExtraSavingsPct.toFixed(1)}% of income) to meet your{' '}
-              {targetSavingsPercentage.toFixed(1)}% savings target.
-            </p>
-          </div>
-        )}
-
-        {/* Expense reduction breakdown */}
-        <div className='mt-4'>
+        {/* Expense Reduction Plan - Integrated with Target */}
+        <div>
           <Card>
             <CardHeader>
-              <CardTitle className='text-sm font-medium'>
-                Expense Reduction Plan
-              </CardTitle>
+              <div className='space-y-4'>
+                <div className='flex items-center justify-between'>
+                  <CardTitle className='flex items-center gap-2 text-lg font-semibold'>
+                    <TrendingDown className='h-5 w-5 text-orange-600' />
+                    Expense Reduction Plan
+                  </CardTitle>
+                </div>
+
+                {/* Savings Summary */}
+                <div className='rounded-lg border border-blue-200 bg-blue-50/50 p-4 dark:border-blue-900 dark:bg-blue-950/20'>
+                  {/* Current Year Actual Savings */}
+                  <div className='mb-3 rounded-md border border-blue-300 bg-blue-100/50 p-3 dark:border-blue-800 dark:bg-blue-900/30'>
+                    <div className='flex items-center justify-between'>
+                      <div>
+                        <div className='text-xs font-medium text-blue-900 dark:text-blue-100'>
+                          Current {selectedYear} Savings
+                        </div>
+                        <div className='mt-0.5 text-xs text-blue-700 dark:text-blue-300'>
+                          Actual savings transactions recorded this year
+                        </div>
+                      </div>
+                      <div className='text-right'>
+                        <div className='text-2xl font-bold text-blue-600'>
+                          {formatCurrency(savings)}
+                        </div>
+                        <div className='text-xs text-blue-600'>
+                          {formatCurrency(savings / 12)}/month avg
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className='grid grid-cols-3 gap-4 text-xs'>
+                    <div className='text-center'>
+                      <div className='text-muted-foreground'>Base Monthly Savings</div>
+                      <div className='mt-1 flex items-center justify-center gap-1'>
+                        <span className='text-lg font-semibold text-teal-600'>$</span>
+                        <Input
+                          type='number'
+                          min='0'
+                          step='50'
+                          value={baseMonthlySavingsGoal}
+                          onChange={(e) => setBaseMonthlySavingsGoal(parseFloat(e.target.value) || 0)}
+                          className='h-8 w-28 text-center text-lg font-bold text-teal-600'
+                        />
+                      </div>
+                      <div className='mt-1 text-xs text-muted-foreground'>
+                        End of Year: {formatCurrency(baseMonthlySavingsGoal * 12)}
+                      </div>
+                    </div>
+                    <div className='text-center'>
+                      <div className='text-muted-foreground'>Additional Savings</div>
+                      <div className='mt-1 text-2xl font-bold text-green-600'>
+                        {formatCurrency(userPlan.rows.reduce((sum, row) => sum + row.monthlyReductionAmount, 0))}
+                      </div>
+                      <div className='mt-0.5 text-sm font-semibold text-green-600'>
+                        {baseMonthlySavingsGoal > 0
+                          ? `+${((userPlan.rows.reduce((sum, row) => sum + row.monthlyReductionAmount, 0) / baseMonthlySavingsGoal) * 100).toFixed(1)}%`
+                          : ''
+                        }
+                      </div>
+                      <div className='mt-1 text-xs text-muted-foreground'>
+                        End of Year: {formatCurrency(userPlan.rows.reduce((sum, row) => sum + row.monthlyReductionAmount, 0) * 12)}
+                      </div>
+                    </div>
+                    <div className='text-center'>
+                      <div className='text-muted-foreground'>Combined Total</div>
+                      <div className='mt-1 text-2xl font-bold text-purple-600'>
+                        {formatCurrency(
+                          baseMonthlySavingsGoal +
+                          userPlan.rows.reduce((sum, row) => sum + row.monthlyReductionAmount, 0)
+                        )}
+                      </div>
+                      <div className='mt-1 text-xs text-muted-foreground'>
+                        End of Year: {formatCurrency((baseMonthlySavingsGoal + userPlan.rows.reduce((sum, row) => sum + row.monthlyReductionAmount, 0)) * 12)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
-              {!isBehindTarget || reductionPlan.length === 0 ? (
-                <p className='text-sm text-muted-foreground'>
-                  You&apos;re at or above your savings target. No reductions
-                  needed for this year.
-                </p>
-              ) : (
-                <div className='space-y-3 text-xs sm:text-sm'>
-                  <p className='text-muted-foreground'>
-                    To move from {savingsPercentage.toFixed(1)}% to{' '}
-                    {targetSavingsPercentage.toFixed(1)}% savings, reduce total
-                    expenses by{' '}
-                    <span className='font-medium'>
-                      {targetExtraSavingsPct.toFixed(1)}% of income
-                    </span>
-                    . Your plan below currently saves{' '}
-                    <span className='font-medium'>
-                      {userPlan.totalSavingsPct.toFixed(1)}% of income
-                    </span>{' '}
-                    ({(userPlan.totalSavingsPct - targetExtraSavingsPct).toFixed(
-                      1
-                    )}
-                    % vs target).
+              {reductionPlan.length === 0 ? (
+                <div className='flex flex-col items-center justify-center py-8 text-center'>
+                  <Target className='mb-2 h-12 w-12 text-muted-foreground' />
+                  <p className='text-sm font-medium text-foreground'>
+                    {Object.keys(categoryBudgets).length > 0 && 
+                     Object.values(categoryBudgets).some(b => b > 0)
+                      ? 'All categories are within budget!'
+                      : 'No expense categories to reduce'}
                   </p>
-                  <div className='mt-2 rounded-md border bg-card'>
-                    <div className='grid grid-cols-4 gap-2 border-b px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:text-xs'>
-                      <span>Category</span>
-                      <span className='text-right'>Spend</span>
-                      <span className='text-right'>Cut / Cat%</span>
-                      <span className='text-right'>Δ Save (% of inc)</span>
+                  <p className='mt-1 text-xs text-muted-foreground'>
+                    {Object.keys(categoryBudgets).length > 0 && 
+                     Object.values(categoryBudgets).some(b => b > 0)
+                      ? 'Set budgets above to see reduction plans based on actual vs budget.'
+                      : 'Add expense transactions or set category budgets to see reduction options.'}
+                  </p>
+                </div>
+              ) : (
+                <div className='space-y-4'>
+                  {/* Categories Table */}
+                  <div className='rounded-lg border bg-card'>
+                    <div className='grid grid-cols-7 gap-3 border-b bg-muted/30 px-4 py-3 text-xs font-medium text-foreground'>
+                      <span className='flex items-center gap-1'>
+                        Category
+                        <Info className='h-3 w-3 text-muted-foreground' />
+                      </span>
+                      <span className='text-right'>Previous Year</span>
+                      <span className='text-right'>Average</span>
+                      <span className='text-right'>Avg Monthly</span>
+                      <span className='text-right'>Reduction %</span>
+                      <span className='text-right'>Savings Amount</span>
+                      <span className='text-right'>% of Income</span>
                     </div>
-                    <div className='max-h-72 space-y-1 overflow-y-auto py-1'>
-                      {userPlan.rows.map((row) => (
-                        <div
-                          key={row.value}
-                          className='grid grid-cols-4 gap-2 px-3 py-1 text-[11px] sm:text-xs'
-                        >
-                          <span className='truncate'>
-                            <div className='flex items-center gap-1'>
+                    <div className='max-h-96 space-y-0 divide-y overflow-y-auto'>
+                      {userPlan.rows.map((row) => {
+                        const categoryIcon = categories.find(
+                          (cat) => cat.value === row.value
+                        )?.icon
+                        const IconComponent = categoryIcon || Circle
+                        const prevYearAmount = previousYearSpending[row.value] || 0
+                        const avgAmount = averageSpending[row.value] || 0
+
+                        return (
+                          <div
+                            key={row.value}
+                            className={cn(
+                              'grid grid-cols-7 gap-3 px-4 py-3 text-xs transition-colors hover:bg-muted/50',
+                              row.isLocked && 'bg-muted/20 opacity-75'
+                            )}
+                          >
+                            <div className='flex items-center gap-2'>
                               <button
                                 type='button'
-                                className='inline-flex h-5 w-5 items-center justify-center rounded border border-border text-[10px] text-muted-foreground hover:bg-muted'
+                                className={cn(
+                                  'inline-flex h-6 w-6 items-center justify-center rounded-md border transition-colors',
+                                  row.isLocked
+                                    ? 'border-red-300 bg-red-50 text-red-600 hover:bg-red-100 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400'
+                                    : 'border-border bg-background text-muted-foreground hover:bg-muted'
+                                )}
                                 onClick={() => {
                                   setLockedCategories((prev) =>
                                     prev.includes(row.value)
@@ -482,6 +856,11 @@ export function Budget() {
                                       : [...prev, row.value]
                                   )
                                 }}
+                                title={
+                                  row.isLocked
+                                    ? 'Unlock to allow changes'
+                                    : 'Lock to prevent changes'
+                                }
                               >
                                 {row.isLocked ? (
                                   <Lock className='h-3 w-3' />
@@ -489,71 +868,94 @@ export function Budget() {
                                   <Unlock className='h-3 w-3' />
                                 )}
                               </button>
+                              <IconComponent className='h-4 w-4 text-muted-foreground' />
                               <span
                                 className={cn(
-                                  'truncate',
+                                  'truncate font-medium',
                                   row.isLocked && 'text-muted-foreground'
                                 )}
                               >
                                 {row.label}
                               </span>
                             </div>
-                          </span>
-                          <span className='text-right'>
-                            {formatCurrency(row.currentAmount)}
-                          </span>
-                          <span className='text-right'>
-                            <div className='flex flex-col items-end gap-1'>
-                              <div className='flex items-center gap-1'>
-                                <Input
-                                  type='number'
-                                  min={0}
-                                  max={100}
-                                  step={0.5}
-                                  className='h-7 w-16 px-1 text-right text-[11px] sm:text-xs'
-                                  value={row.cutPct.toFixed(1)}
-                                  disabled={row.isLocked}
-                                  onChange={(e) => {
-                                    const v = parseFloat(e.target.value)
-                                    const cutPct = Number.isNaN(v)
-                                      ? 0
-                                      : Math.max(0, Math.min(100, v))
-                                    setCustomCuts((prev) => {
-                                      const existing = prev.find(
-                                        (c) => c.value === row.value
-                                      )
-                                      if (existing) {
-                                        return prev.map((c) =>
-                                          c.value === row.value
-                                            ? { ...c, cutPct }
-                                            : c
-                                        )
-                                      }
-                                      return [...prev, { value: row.value, cutPct }]
-                                    })
-                                  }}
-                                />
-                                <span className='text-[10px] text-muted-foreground'>
-                                  %
-                                </span>
-                              </div>
-                              <span className='text-[10px] text-muted-foreground'>
-                                {formatCurrency(row.reductionAmount)}
+                            <div className='flex items-center justify-end'>
+                              <span className='text-muted-foreground text-[10px]'>
+                                {prevYearAmount > 0 ? formatCurrency(prevYearAmount) : '-'}
                               </span>
                             </div>
-                          </span>
-                          <span className='text-right'>
-                            {row.savingsPctOfIncome.toFixed(2)}%
-                          </span>
-                        </div>
-                      ))}
+                            <div className='flex items-center justify-end'>
+                              <span className='text-muted-foreground text-[10px]'>
+                                {avgAmount > 0 ? formatCurrency(avgAmount) : '-'}
+                              </span>
+                            </div>
+                            <div className='flex items-center justify-end'>
+                              <span className='text-muted-foreground text-[10px]'>
+                                {row.avgMonthlyAmount > 0 ? formatCurrency(row.avgMonthlyAmount) : '-'}
+                              </span>
+                            </div>
+                            <div className='flex items-center justify-end'>
+                              <CategoryCutSlider
+                                value={row.cutPct ?? 0}
+                                disabled={row.isLocked}
+                                onValueChange={(cutPct) => {
+                                  setCustomCuts((prev) => {
+                                    const existing = prev.find(
+                                      (c) => c.value === row.value
+                                    )
+                                    if (existing) {
+                                      return prev.map((c) =>
+                                        c.value === row.value
+                                          ? { ...c, cutPct }
+                                          : c
+                                      )
+                                    }
+                                    return [...prev, { value: row.value, cutPct }]
+                                  })
+                                }}
+                              />
+                            </div>
+                            <div className='flex items-center justify-end'>
+                              <span className='font-medium text-green-600'>
+                                {formatCurrency(row.monthlyReductionAmount)}
+                              </span>
+                            </div>
+                            <div className='flex items-center justify-end'>
+                              <span className='font-medium'>
+                                {row.monthlySavingsPctOfIncome.toFixed(2)}%
+                              </span>
+                            </div>
+                          </div>
+                        )
+                      })}
                     </div>
-                    <div className='grid grid-cols-4 gap-2 border-t px-3 py-2 text-[11px] font-medium sm:text-xs'>
+                    <div className='grid grid-cols-7 gap-3 border-t bg-muted/30 px-4 py-3 text-xs font-semibold'>
                       <span>Total</span>
+                      <span className='text-right text-muted-foreground'>
+                        {formatCurrency(
+                          Object.values(previousYearSpending).reduce((sum, val) => sum + val, 0)
+                        )}
+                      </span>
+                      <span className='text-right text-muted-foreground'>
+                        {formatCurrency(
+                          Object.values(averageSpending).reduce((sum, val) => sum + val, 0)
+                        )}
+                      </span>
+                      <span className='text-right text-muted-foreground'>
+                        {formatCurrency(
+                          Object.values(averageSpending).reduce((sum, val) => sum + val, 0) / 12
+                        )}
+                      </span>
                       <span />
-                      <span />
+                      <span className='text-right text-green-600'>
+                        {formatCurrency(
+                          userPlan.rows.reduce(
+                            (sum, row) => sum + row.monthlyReductionAmount,
+                            0
+                          )
+                        )}
+                      </span>
                       <span className='text-right'>
-                        ≈ {userPlan.totalSavingsPct.toFixed(2)}%
+                        {userPlan.totalSavingsPct.toFixed(2)}%
                       </span>
                     </div>
                   </div>

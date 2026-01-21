@@ -1,5 +1,5 @@
 import { Outlet } from '@tanstack/react-router'
-import { Monitor, Bell, Palette, Wrench, UserCog, Tag, Target } from 'lucide-react'
+import { Monitor, Bell, Palette, Wrench, UserCog, Tag } from 'lucide-react'
 import { Separator } from '@/components/ui/separator'
 import { ConfigDrawer } from '@/components/config-drawer'
 import { Header } from '@/components/layout/header'
@@ -39,11 +39,6 @@ const sidebarNavItems = [
     title: 'Categories',
     href: '/settings/categories',
     icon: <Tag size={18} />,
-  },
-  {
-    title: 'Budget',
-    href: '/settings/budget',
-    icon: <Target size={18} />,
   },
 ]
 

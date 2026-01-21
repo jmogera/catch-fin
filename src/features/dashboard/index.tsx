@@ -5,7 +5,6 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import { AlertCircle } from 'lucide-react'
 import { ConfigDrawer } from '@/components/config-drawer'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
@@ -16,22 +15,23 @@ import { ExpenseCategoryTable } from './components/expense-category-table'
 import { useAccounts } from '@/hooks/use-accounts'
 import { useTransactions } from '@/hooks/use-transactions'
 import { useCategories } from '@/hooks/use-categories'
-import { useUserSettings } from '@/hooks/use-user-settings'
+import { useBudgetPlan } from '@/hooks/use-budget-plan'
 import { convertCategoriesToOptions } from '@/features/transactions/utils/category-helpers'
-import { TrendingUp, TrendingDown, PiggyBank, Target } from 'lucide-react'
+import { TrendingUp, TrendingDown, PiggyBank, CheckCircle2, AlertCircle } from 'lucide-react'
 import { useState, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { formatCurrency } from '@/lib/utils'
+import { Badge } from '@/components/ui/badge'
 
 export function Dashboard() {
   const { accounts, isLoading: accountsLoading } = useAccounts()
   const { transactions, isLoading: transactionsLoading } = useTransactions()
   const { categories: dbCategories } = useCategories()
-  const { settings } = useUserSettings()
 
   const currentYear = new Date().getFullYear()
   const [selectedYear, setSelectedYear] = useState(currentYear)
+  const { plan: budgetPlan } = useBudgetPlan(selectedYear)
 
   // Get category classifications (same logic as table)
   const categories = useMemo(() => convertCategoriesToOptions(dbCategories), [dbCategories])
@@ -58,21 +58,6 @@ export function Dashboard() {
         labelIndicatesInterest ||
         labelIndicatesRefund
       )
-    })
-  }, [categories])
-
-  const savingsCategories = useMemo(() => {
-    return categories.filter((cat) => {
-      const isExplicitSavings =
-        cat.value === 'savings' ||
-        cat.value === 'saving' ||
-        cat.value === 'savings-account' ||
-        cat.value === 'savings_account'
-
-      const labelIndicatesSavings = /saving/i.test(cat.label)
-      const valueIndicatesSavings = /saving/i.test(cat.value)
-
-      return isExplicitSavings || labelIndicatesSavings || valueIndicatesSavings
     })
   }, [categories])
 
@@ -112,7 +97,7 @@ export function Dashboard() {
     )
   })
 
-  // Build the same data structure as the table
+  // Build the same data structure as the table for income/expenses
   const incomeDataByCategory: Record<string, number> = {}
   const expenseDataByCategory: Record<string, number> = {}
   let uncategorizedIncome = 0
@@ -126,8 +111,7 @@ export function Dashboard() {
   // Initialize expense categories
   const expenseCategories = categories.filter((cat) => {
     const isIncome = incomeCategories.some((incomeCat) => incomeCat.value === cat.value)
-    const isSavings = savingsCategories.some((savingsCat) => savingsCat.value === cat.value)
-    return !isIncome && !isSavings
+    return !isIncome
   })
 
   expenseCategories.forEach((category) => {
@@ -136,16 +120,11 @@ export function Dashboard() {
 
   // Process transactions exactly like the table
   yearTransactions.forEach((transaction) => {
-    const tDate = new Date(transaction.date)
     const category = transaction.category
     const amount = Math.abs(transaction.amount) // Table uses Math.abs()
-    const isSavingsCategory = savingsCategories.some((sc) => sc.value === category)
 
     if (transaction.type === 'income') {
-      if (isSavingsCategory) {
-        // Skip - goes to savings
-        return
-      } else if (!category) {
+      if (!category) {
         uncategorizedIncome += amount
       } else if (incomeDataByCategory[category] !== undefined) {
         // Only count if category exists in incomeDataByCategory
@@ -153,10 +132,7 @@ export function Dashboard() {
       }
       // If category doesn't exist in incomeDataByCategory, skip it (matches table logic)
     } else if (transaction.type === 'expense') {
-      if (isSavingsCategory) {
-        // Skip - goes to savings
-        return
-      } else if (!category) {
+      if (!category) {
         uncategorizedExpenses += amount
       } else if (expenseDataByCategory[category] !== undefined) {
         // Only count if category exists in expenseDataByCategory
@@ -170,21 +146,56 @@ export function Dashboard() {
   const totalIncome = uncategorizedIncome + Object.values(incomeDataByCategory).reduce((sum, val) => sum + val, 0)
   const totalExpenses = uncategorizedExpenses + Object.values(expenseDataByCategory).reduce((sum, val) => sum + val, 0)
 
-  const savings = totalIncome - totalExpenses
+  // Savings card should reflect only transactions whose type is explicitly 'savings'
+  const savings = transactions
+    .filter((t) => {
+      const tDate = new Date(t.date)
+      return t.type === 'savings' && tDate.getFullYear() === selectedYear
+    })
+    .reduce((sum, t) => sum + Math.abs(t.amount), 0)
   
-  // Calculate percentages
+  // Calculate percentages relative to total income
   const expensePercentage = totalIncome > 0 ? (totalExpenses / totalIncome) * 100 : 0
   const savingsPercentage = totalIncome > 0 ? (savings / totalIncome) * 100 : 0
 
-  // Calculate savings target and progress
-  const targetSavingsPercentage = settings?.savingsPercentage ?? 20
-  const targetSavingsAmount = totalIncome * (targetSavingsPercentage / 100)
-  const savingsDifference = savings - targetSavingsAmount
-  const percentageDifference = savingsPercentage - targetSavingsPercentage
-  const isBehindTarget = savingsDifference < 0
-  // If behind, calculate how much expenses need to be reduced
-  const expenseReductionNeeded = isBehindTarget ? Math.abs(savingsDifference) : 0
-  const expenseReductionPercentage = totalIncome > 0 ? (expenseReductionNeeded / totalIncome) * 100 : 0
+  // Budget plan tracking - only if a plan exists
+  const budgetStatus = useMemo(() => {
+    if (!budgetPlan) return null
+
+    const currentMonth = new Date().getMonth() + 1 // 1-12
+    const isCurrentYear = selectedYear === currentYear
+    const monthsElapsed = isCurrentYear ? currentMonth : 12
+
+    // Calculate expected savings based on plan
+    const expectedMonthlySavings = budgetPlan.baseMonthlySavingsGoal
+    const expectedSavingsToDate = expectedMonthlySavings * monthsElapsed
+    const savingsGoalMet = savings >= expectedSavingsToDate
+
+    // Calculate expected expenses based on category budgets
+    let expectedExpensesYTD = 0
+    let hasExpenseBudgets = false
+
+    if (budgetPlan.categoryBudgets && Object.keys(budgetPlan.categoryBudgets).length > 0) {
+      hasExpenseBudgets = true
+      Object.values(budgetPlan.categoryBudgets).forEach(budget => {
+        // Annual budget, prorate for months elapsed
+        expectedExpensesYTD += (budget / 12) * monthsElapsed
+      })
+    }
+
+    const expensesOnTrack = hasExpenseBudgets ? totalExpenses <= expectedExpensesYTD : null
+
+    return {
+      savingsGoalMet,
+      expectedSavingsToDate,
+      actualSavings: savings,
+      expensesOnTrack,
+      expectedExpensesYTD,
+      actualExpenses: totalExpenses,
+      monthsElapsed,
+      hasExpenseBudgets,
+    }
+  }, [budgetPlan, savings, totalExpenses, selectedYear, currentYear])
 
   if (accountsLoading || transactionsLoading) {
     return (
@@ -243,53 +254,6 @@ export function Dashboard() {
           </div>
         </div>
         <div className='space-y-4'>
-          {/* Savings Target Card */}
-          {settings && (
-            <Card className='border-blue-200 bg-blue-50/50 dark:border-blue-900 dark:bg-blue-950/20'>
-              <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-2'>
-                <CardTitle className='text-sm font-medium'>Savings Target</CardTitle>
-                <Target className='h-4 w-4 text-blue-600' />
-              </CardHeader>
-              <CardContent>
-                <div className='space-y-2'>
-                  <div className='flex items-baseline justify-between'>
-                    <span className='text-sm text-muted-foreground'>Target:</span>
-                    <span className='text-lg font-semibold text-blue-600'>
-                      {targetSavingsPercentage.toFixed(1)}%
-                    </span>
-                  </div>
-                  <div className='flex items-baseline justify-between'>
-                    <span className='text-sm text-muted-foreground'>Current:</span>
-                    <span className={`text-lg font-semibold ${isBehindTarget ? 'text-red-600' : 'text-green-600'}`}>
-                      {savingsPercentage.toFixed(1)}%
-                    </span>
-                  </div>
-                  {isBehindTarget && (
-                    <div className='mt-3 rounded-md border border-red-200 bg-red-50 p-3 dark:border-red-900 dark:bg-red-950/20'>
-                      <div className='flex items-start gap-2'>
-                        <AlertCircle className='h-4 w-4 text-red-600 mt-0.5' />
-                        <div className='flex-1 space-y-1'>
-                          <p className='text-sm font-medium text-red-900 dark:text-red-100'>
-                            Behind target by {Math.abs(percentageDifference).toFixed(1)}%
-                          </p>
-                          <p className='text-xs text-red-700 dark:text-red-300'>
-                            Reduce expenses by {formatCurrency(expenseReductionNeeded)} ({expenseReductionPercentage.toFixed(1)}% of income) to meet your {targetSavingsPercentage.toFixed(1)}% savings target.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  {!isBehindTarget && savingsDifference > 0 && (
-                    <div className='mt-3 rounded-md border border-green-200 bg-green-50 p-3 dark:border-green-900 dark:bg-green-950/20'>
-                      <p className='text-sm font-medium text-green-900 dark:text-green-100'>
-                        ✓ Exceeding target by {percentageDifference.toFixed(1)}% ({formatCurrency(savingsDifference)})
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          )}
           <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-3'>
             <Card>
               <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-2'>
@@ -313,7 +277,16 @@ export function Dashboard() {
                 <CardTitle className='text-sm font-medium'>
                   Total Expenses
                 </CardTitle>
-                <TrendingDown className='h-4 w-4 text-red-600' />
+                <div className='flex items-center gap-2'>
+                  {budgetStatus && budgetStatus.hasExpenseBudgets && budgetStatus.expensesOnTrack !== null && (
+                    budgetStatus.expensesOnTrack ? (
+                      <CheckCircle2 className='h-4 w-4 text-green-600' />
+                    ) : (
+                      <AlertCircle className='h-4 w-4 text-orange-600' />
+                    )
+                  )}
+                  <TrendingDown className='h-4 w-4 text-red-600' />
+                </div>
               </CardHeader>
               <CardContent>
                 <div className='text-2xl font-bold text-red-600'>
@@ -322,15 +295,43 @@ export function Dashboard() {
                     currency: 'USD',
                   }).format(totalExpenses)}
                 </div>
-                <p className='text-xs text-muted-foreground'>
-                  {totalIncome > 0 ? `${expensePercentage.toFixed(1)}% of income` : selectedYear}
-                </p>
+                <div className='space-y-1'>
+                  <p className='text-xs text-muted-foreground'>
+                    {totalIncome > 0 ? `${expensePercentage.toFixed(1)}% of income` : selectedYear}
+                  </p>
+                  {budgetStatus && budgetStatus.hasExpenseBudgets && (
+                    <div className='flex items-center gap-2'>
+                      <Badge
+                        variant={budgetStatus.expensesOnTrack ? 'default' : 'secondary'}
+                        className={`text-xs ${
+                          budgetStatus.expensesOnTrack
+                            ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100'
+                            : 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-100'
+                        }`}
+                      >
+                        {budgetStatus.expensesOnTrack ? 'On Track' : 'Over Budget'}
+                      </Badge>
+                      <span className='text-xs text-muted-foreground'>
+                        Budget: {formatCurrency(budgetStatus.expectedExpensesYTD)}
+                      </span>
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </Card>
             <Card>
               <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-2'>
                 <CardTitle className='text-sm font-medium'>Savings</CardTitle>
-                <PiggyBank className='h-4 w-4 text-blue-600' />
+                <div className='flex items-center gap-2'>
+                  {budgetStatus && (
+                    budgetStatus.savingsGoalMet ? (
+                      <CheckCircle2 className='h-4 w-4 text-green-600' />
+                    ) : (
+                      <AlertCircle className='h-4 w-4 text-orange-600' />
+                    )
+                  )}
+                  <PiggyBank className='h-4 w-4 text-blue-600' />
+                </div>
               </CardHeader>
               <CardContent>
                 <div
@@ -343,9 +344,28 @@ export function Dashboard() {
                     currency: 'USD',
                   }).format(savings)}
                 </div>
-                <p className='text-xs text-muted-foreground'>
-                  {totalIncome > 0 ? `${savingsPercentage.toFixed(1)}% of income` : 'Income - Expenses'}
-                </p>
+                <div className='space-y-1'>
+                  <p className='text-xs text-muted-foreground'>
+                    {totalIncome > 0 ? `${savingsPercentage.toFixed(1)}% of income` : 'Income - Expenses'}
+                  </p>
+                  {budgetStatus && (
+                    <div className='flex items-center gap-2'>
+                      <Badge
+                        variant={budgetStatus.savingsGoalMet ? 'default' : 'secondary'}
+                        className={`text-xs ${
+                          budgetStatus.savingsGoalMet
+                            ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100'
+                            : 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-100'
+                        }`}
+                      >
+                        {budgetStatus.savingsGoalMet ? 'On Track' : 'Below Goal'}
+                      </Badge>
+                      <span className='text-xs text-muted-foreground'>
+                        Goal: {formatCurrency(budgetStatus.expectedSavingsToDate)}
+                      </span>
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </Card>
           </div>

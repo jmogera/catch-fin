@@ -27,12 +27,11 @@ CREATE TABLE IF NOT EXISTS categories (
   CONSTRAINT categories_user_value_unique UNIQUE (user_id, value)
 );
 
--- Create transactions table
 CREATE TABLE IF NOT EXISTS transactions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   description TEXT NOT NULL,
   amount DECIMAL(15, 2) NOT NULL,
-  type TEXT NOT NULL CHECK (type IN ('income', 'expense', 'transfer')),
+  type TEXT NOT NULL CHECK (type IN ('income', 'expense', 'transfer', 'savings')),
   category TEXT,
   account_id UUID NOT NULL,
   date DATE NOT NULL,
@@ -229,5 +228,103 @@ CREATE POLICY "Users can delete their own settings"
 DROP TRIGGER IF EXISTS update_user_settings_updated_at ON user_settings;
 CREATE TRIGGER update_user_settings_updated_at
   BEFORE UPDATE ON user_settings
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+-- Create yearly_savings_goals table
+CREATE TABLE IF NOT EXISTS yearly_savings_goals (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL,
+  year INTEGER NOT NULL,
+  savings_percentage DECIMAL(5, 2) NOT NULL DEFAULT 20.00 CHECK (savings_percentage >= 0 AND savings_percentage <= 100),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT yearly_savings_goals_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
+  CONSTRAINT yearly_savings_goals_user_year_unique UNIQUE (user_id, year)
+);
+
+-- Create index for yearly_savings_goals
+CREATE INDEX IF NOT EXISTS idx_yearly_savings_goals_user_id ON yearly_savings_goals(user_id);
+CREATE INDEX IF NOT EXISTS idx_yearly_savings_goals_year ON yearly_savings_goals(year);
+
+-- Enable Row Level Security for yearly_savings_goals
+ALTER TABLE yearly_savings_goals ENABLE ROW LEVEL SECURITY;
+
+-- RLS Policies for yearly_savings_goals
+DROP POLICY IF EXISTS "Users can view their own yearly goals" ON yearly_savings_goals;
+CREATE POLICY "Users can view their own yearly goals"
+  ON yearly_savings_goals FOR SELECT
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can insert their own yearly goals" ON yearly_savings_goals;
+CREATE POLICY "Users can insert their own yearly goals"
+  ON yearly_savings_goals FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update their own yearly goals" ON yearly_savings_goals;
+CREATE POLICY "Users can update their own yearly goals"
+  ON yearly_savings_goals FOR UPDATE
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can delete their own yearly goals" ON yearly_savings_goals;
+CREATE POLICY "Users can delete their own yearly goals"
+  ON yearly_savings_goals FOR DELETE
+  USING (auth.uid() = user_id);
+
+-- Trigger to automatically update updated_at for yearly_savings_goals
+DROP TRIGGER IF EXISTS update_yearly_savings_goals_updated_at ON yearly_savings_goals;
+CREATE TRIGGER update_yearly_savings_goals_updated_at
+  BEFORE UPDATE ON yearly_savings_goals
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+-- Create budget_plans table to store custom cuts, locked categories, and category budgets
+CREATE TABLE IF NOT EXISTS budget_plans (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL,
+  year INTEGER NOT NULL,
+  custom_cuts JSONB NOT NULL DEFAULT '[]'::jsonb,
+  locked_categories TEXT[] NOT NULL DEFAULT '{}',
+  category_budgets JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT budget_plans_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
+  CONSTRAINT budget_plans_user_year_unique UNIQUE (user_id, year)
+);
+
+-- Create index for budget_plans
+CREATE INDEX IF NOT EXISTS idx_budget_plans_user_id ON budget_plans(user_id);
+CREATE INDEX IF NOT EXISTS idx_budget_plans_year ON budget_plans(year);
+
+-- Enable Row Level Security for budget_plans
+ALTER TABLE budget_plans ENABLE ROW LEVEL SECURITY;
+
+-- RLS Policies for budget_plans
+DROP POLICY IF EXISTS "Users can view their own budget plans" ON budget_plans;
+CREATE POLICY "Users can view their own budget plans"
+  ON budget_plans FOR SELECT
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can insert their own budget plans" ON budget_plans;
+CREATE POLICY "Users can insert their own budget plans"
+  ON budget_plans FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update their own budget plans" ON budget_plans;
+CREATE POLICY "Users can update their own budget plans"
+  ON budget_plans FOR UPDATE
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can delete their own budget plans" ON budget_plans;
+CREATE POLICY "Users can delete their own budget plans"
+  ON budget_plans FOR DELETE
+  USING (auth.uid() = user_id);
+
+-- Trigger to automatically update updated_at for budget_plans
+DROP TRIGGER IF EXISTS update_budget_plans_updated_at ON budget_plans;
+CREATE TRIGGER update_budget_plans_updated_at
+  BEFORE UPDATE ON budget_plans
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();

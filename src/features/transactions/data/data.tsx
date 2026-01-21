@@ -2,6 +2,7 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowLeftRight,
+  PiggyBank,
   Utensils,
   Car,
   ShoppingBag,
@@ -25,6 +26,11 @@ export const transactionTypes = [
     label: 'Expense',
     value: 'expense' as const,
     icon: ArrowDown,
+  },
+  {
+    label: 'Savings',
+    value: 'savings' as const,
+    icon: PiggyBank,
   },
   {
     label: 'Transfer',

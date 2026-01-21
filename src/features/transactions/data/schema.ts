@@ -4,6 +4,7 @@ export const transactionTypeSchema = z.union([
   z.literal('income'),
   z.literal('expense'),
   z.literal('transfer'),
+  z.literal('savings'),
 ])
 
 // Category can be any string (from database) or undefined

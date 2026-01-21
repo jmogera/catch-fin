@@ -3,7 +3,7 @@ import { type Transaction } from './schema'
 
 faker.seed(12345)
 
-const transactionTypes = ['income', 'expense', 'transfer'] as const
+const transactionTypes = ['income', 'expense', 'transfer', 'savings'] as const
 const categories = [
   'food',
   'transportation',
@@ -27,11 +27,11 @@ export const transactions: Transaction[] = Array.from({ length: 50 }, () => {
     : faker.helpers.arrayElement(categories)
   const accountId = faker.helpers.arrayElement(accountIds)
   
-  // Income should be positive, expense negative, transfer can be either
+  // Income should be positive, expense negative, savings positive, transfer can be either
   let amount = faker.number.float({ min: 10, max: 2000, fractionDigits: 2 })
   if (type === 'expense') {
     amount = -Math.abs(amount)
-  } else if (type === 'income') {
+  } else if (type === 'income' || type === 'savings') {
     amount = Math.abs(amount)
   }
 

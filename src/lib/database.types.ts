@@ -75,7 +75,7 @@ export interface Database {
           id: string
           description: string
           amount: number
-          type: 'income' | 'expense' | 'transfer'
+          type: 'income' | 'expense' | 'transfer' | 'savings'
           category: 'food' | 'transportation' | 'shopping' | 'bills' | 'entertainment' | 'healthcare' | 'education' | 'salary' | 'investment' | 'other' | 'uncategorized' | null
           account_id: string
           date: string
@@ -87,7 +87,7 @@ export interface Database {
           id?: string
           description: string
           amount: number
-          type: 'income' | 'expense' | 'transfer'
+          type: 'income' | 'expense' | 'transfer' | 'savings'
           category?: string | null
           account_id: string
           date: string
@@ -99,7 +99,7 @@ export interface Database {
           id?: string
           description?: string
           amount?: number
-          type?: 'income' | 'expense' | 'transfer'
+          type?: 'income' | 'expense' | 'transfer' | 'savings'
           category?: string | null
           account_id?: string
           date?: string
@@ -127,6 +127,64 @@ export interface Database {
           id?: string
           user_id?: string
           savings_percentage?: number
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      yearly_savings_goals: {
+        Row: {
+          id: string
+          user_id: string
+          year: number
+          savings_percentage: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          year: number
+          savings_percentage?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          year?: number
+          savings_percentage?: number
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      budget_plans: {
+        Row: {
+          id: string
+          user_id: string
+          year: number
+          custom_cuts: unknown
+          locked_categories: string[]
+          category_budgets: unknown
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          year: number
+          custom_cuts?: unknown
+          locked_categories?: string[]
+          category_budgets?: unknown
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          year?: number
+          custom_cuts?: unknown
+          locked_categories?: string[]
+          category_budgets?: unknown
           created_at?: string
           updated_at?: string
         }
